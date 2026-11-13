@@ -1,0 +1,64 @@
+#!/bin/bash
+
+# Argument ပါရင် ယူမယ်၊ မပါရင် Domain ရိုက်ထည့်ခိုင်းမယ်
+DOMAIN="$1"
+if [ -z "$DOMAIN" ]; then
+    read -p "Enter your domain (e.g., sub.domain.com): " DOMAIN < /dev/tty
+fi
+
+if [ -z "$DOMAIN" ]; then
+    echo "Error: Domain cannot be empty!"
+    exit 1
+fi
+
+ACME_BIN="/root/.acme.sh/acme.sh"
+SSL_DIR="/etc/ssl/$DOMAIN"
+CERT_DIR="/var/lib/marzban/certs/$DOMAIN"
+ENV_FILE="/opt/marzban/.env"
+
+echo "1. Renewing SSL certificate for $DOMAIN via acme.sh..."
+if [ -f "$ACME_BIN" ]; then
+    "$ACME_BIN" --renew -d "$DOMAIN" --ecc --force
+    mkdir -p "$SSL_DIR"
+    "$ACME_BIN" --install-cert -d "$DOMAIN" --ecc \
+        --key-file "$SSL_DIR/private.key" \
+        --fullchain-file "$SSL_DIR/fullchain.cer"
+else
+    echo "Warning: acme.sh not found at $ACME_BIN! Skipping renewal..."
+fi
+
+echo "2. Copying certificates to Marzban directory..."
+if [ ! -f "$SSL_DIR/fullchain.cer" ] || [ ! -f "$SSL_DIR/private.key" ]; then
+    echo "Error: Certificate files not found in $SSL_DIR/"
+    exit 1
+fi
+
+mkdir -p "$CERT_DIR"
+cp -f "$SSL_DIR/fullchain.cer" "$CERT_DIR/fullchain.pem"
+cp -f "$SSL_DIR/private.key" "$CERT_DIR/key.pem"
+chmod 644 "$CERT_DIR/fullchain.pem"
+chmod 600 "$CERT_DIR/key.pem"
+
+echo "3. Updating Marzban .env SSL paths..."
+if [ -f "$ENV_FILE" ]; then
+    if grep -q "^#*UVICORN_SSL_CERTFILE" "$ENV_FILE"; then
+        sed -i "s|^#*UVICORN_SSL_CERTFILE.*|UVICORN_SSL_CERTFILE = \"$CERT_DIR/fullchain.pem\"|g" "$ENV_FILE"
+    else
+        echo "UVICORN_SSL_CERTFILE = \"$CERT_DIR/fullchain.pem\"" >> "$ENV_FILE"
+    fi
+
+    if grep -q "^#*UVICORN_SSL_KEYFILE" "$ENV_FILE"; then
+        sed -i "s|^#*UVICORN_SSL_KEYFILE.*|UVICORN_SSL_KEYFILE = \"$CERT_DIR/key.pem\"|g" "$ENV_FILE"
+    else
+        echo "UVICORN_SSL_KEYFILE = \"$CERT_DIR/key.pem\"" >> "$ENV_FILE"
+    fi
+    echo "Updated .env successfully."
+else
+    echo "Warning: $ENV_FILE not found!"
+fi
+
+echo "4. Restarting Marzban service..."
+marzban restart
+
+echo "Done! New certificate expiry date:"
+openssl x509 -enddate -noout -in "$CERT_DIR/fullchain.pem"
