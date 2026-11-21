@@ -129,7 +129,7 @@ print(f"ADDED {total} proxies to {len(plan)} users.")
 PYEOF
 )
 PY_STATUS=$?
-echo "$PY_OUT"
+echo "$PY_OUT" | grep -v "^NOTHING_TO_DO$"
 if [ $PY_STATUS -ne 0 ]; then
     echo -e "\e[1;31m❌ Error: Python step failed (exit $PY_STATUS)\e[0m"
     exit 1
